@@ -1,30 +1,40 @@
-"""Main application window layout."""
+"""Main application window and screen navigation shell."""
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QWidget
+from enum import IntEnum
 
-from app.ui.board import ChessBoardWidget
-from app.ui.widgets.placeholder_panel import PlaceholderPanel
+from PySide6.QtWidgets import QMainWindow, QStackedWidget
+
+from app.ui.screens import DrillScreen, HomeScreen, WorkspaceScreen
+
+
+class ScreenIndex(IntEnum):
+    """Stable indexes for the main stacked navigation container."""
+
+    HOME = 0
+    WORKSPACE = 1
+    DRILL = 2
 
 
 class MainWindow(QMainWindow):
-    """Top-level window that composes the main application shell."""
+    """Top-level window that composes the Mainline application shell."""
 
     WINDOW_TITLE = "Mainline"
     DEFAULT_WIDTH = 1400
     DEFAULT_HEIGHT = 900
 
     def __init__(self) -> None:
-        """Initialize the main window and its static UI regions."""
+        """Initialize menus, screens, and navigation signal wiring."""
         super().__init__()
         self.setWindowTitle(self.WINDOW_TITLE)
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
 
         self._create_menu_bar()
         self._create_tool_bar()
-        self._create_central_layout()
-        self.statusBar().showMessage("Ready")
+        self._create_screens()
+        self._apply_style_sheet()
+        self.statusBar().showMessage("Home")
 
     def _create_menu_bar(self) -> None:
         """Create the top-level menu categories for future actions."""
@@ -38,19 +48,87 @@ class MainWindow(QMainWindow):
         """Create an empty toolbar that will host common actions later."""
         self.addToolBar("Main Toolbar")
 
-    def _create_central_layout(self) -> None:
-        """Create the placeholder three-column application layout."""
-        central_widget = QWidget(self)
-        layout = QHBoxLayout(central_widget)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
+    def _create_screens(self) -> None:
+        """Create the central stacked screen container and wire navigation."""
+        self._stack = QStackedWidget(self)
+        self._stack.setObjectName("main_screen_stack")
 
-        debuts_panel = PlaceholderPanel("Debuts")
-        board_panel = ChessBoardWidget()
-        inspector_panel = PlaceholderPanel("Inspector")
+        self._home_screen = HomeScreen()
+        self._workspace_screen = WorkspaceScreen()
+        self._drill_screen = DrillScreen()
 
-        layout.addWidget(debuts_panel, 1)
-        layout.addWidget(board_panel, 3)
-        layout.addWidget(inspector_panel, 1)
+        self._stack.addWidget(self._home_screen)
+        self._stack.addWidget(self._workspace_screen)
+        self._stack.addWidget(self._drill_screen)
+        self.setCentralWidget(self._stack)
 
-        self.setCentralWidget(central_widget)
+        self._home_screen.continueRequested.connect(self.show_workspace)
+        self._home_screen.openRepertoireRequested.connect(self.show_workspace)
+        self._home_screen.createRepertoireRequested.connect(self.show_workspace)
+        self._home_screen.drillRequested.connect(self.show_drill)
+        self._home_screen.settingsRequested.connect(self._show_settings_placeholder)
+        self._workspace_screen.backHomeRequested.connect(self.show_home)
+        self._workspace_screen.startDrillRequested.connect(self.show_drill)
+        self._drill_screen.backWorkspaceRequested.connect(self.show_workspace)
+        self._drill_screen.exitHomeRequested.connect(self.show_home)
+        self._drill_screen.showAnswerRequested.connect(self._show_answer_placeholder)
+        self._drill_screen.nextRequested.connect(self._next_drill_placeholder)
+
+    def show_home(self) -> None:
+        """Navigate to the launcher dashboard."""
+        self._stack.setCurrentIndex(ScreenIndex.HOME)
+        self.statusBar().showMessage("Home")
+
+    def show_workspace(self) -> None:
+        """Navigate to the selected repertoire workspace."""
+        self._stack.setCurrentIndex(ScreenIndex.WORKSPACE)
+        self.statusBar().showMessage("Workspace")
+
+    def show_drill(self) -> None:
+        """Navigate to focused drill mode."""
+        self._stack.setCurrentIndex(ScreenIndex.DRILL)
+        self.statusBar().showMessage("Drill mode")
+
+    def _show_settings_placeholder(self) -> None:
+        """Reserve a navigation hook for a future settings screen/dialog."""
+        self.statusBar().showMessage("Settings will be added later")
+
+    def _show_answer_placeholder(self) -> None:
+        """Reserve a hook for future drill answer reveal logic."""
+        self.statusBar().showMessage("Answer reveal will be added with drill logic")
+
+    def _next_drill_placeholder(self) -> None:
+        """Reserve a hook for future drill progression logic."""
+        self.statusBar().showMessage("Next drill position will be added with drill logic")
+
+    def _apply_style_sheet(self) -> None:
+        """Apply lightweight shell styling while keeping widgets conventional."""
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                background: #f5f6f2;
+            }
+            #home_title {
+                font-size: 42px;
+                font-weight: 700;
+                color: #202421;
+            }
+            #home_subtitle, #muted_text {
+                color: #66706a;
+                font-size: 14px;
+            }
+            #home_card, #board_region, #drill_board_shell {
+                background: #ffffff;
+                border: 1px solid #d9ded8;
+                border-radius: 10px;
+            }
+            #section_heading, #screen_heading {
+                color: #202421;
+                font-size: 20px;
+                font-weight: 650;
+            }
+            QPushButton {
+                padding: 8px 14px;
+            }
+            """
+        )
