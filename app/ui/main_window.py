@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QWidget
 
+from app.ui.board import ChessBoardWidget
 from app.ui.widgets.placeholder_panel import PlaceholderPanel
 
 
@@ -45,7 +46,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
 
         debuts_panel = PlaceholderPanel("Debuts")
-        board_panel = PlaceholderPanel("Chess Board")
+        board_panel = ChessBoardWidget()
         inspector_panel = PlaceholderPanel("Inspector")
 
         layout.addWidget(debuts_panel, 1)
