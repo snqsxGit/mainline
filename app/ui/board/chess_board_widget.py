@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from app.ui.board.models import BoardOrientation, BoardTheme
+from app.ui.board.models import BoardOrientation, BoardTheme, CoordinateStyle
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,6 @@ class BoardLayout:
     outer_rect: QRectF
     squares_rect: QRectF
     square_size: float
-    coordinate_margin: float
 
 
 class ChessBoardWidget(QWidget):
@@ -36,6 +35,8 @@ class ChessBoardWidget(QWidget):
 
     orientationChanged = Signal(BoardOrientation)
     themeChanged = Signal(BoardTheme)
+    coordinateVisibilityChanged = Signal(bool)
+    coordinateStyleChanged = Signal(CoordinateStyle)
 
     def __init__(
         self,
@@ -48,6 +49,8 @@ class ChessBoardWidget(QWidget):
         super().__init__(parent)
         self._orientation = orientation
         self._theme = theme or BoardTheme()
+        self._coordinates_visible = True
+        self._coordinate_style = self._theme.coordinate_style
 
         self.setObjectName("chess_board_widget")
         self.setMinimumSize(280, 280)
@@ -80,8 +83,39 @@ class ChessBoardWidget(QWidget):
         if self._theme == theme:
             return
         self._theme = theme
+        self._coordinate_style = theme.coordinate_style
         self.themeChanged.emit(theme)
         self.updateGeometry()
+        self.update()
+
+    @property
+    def coordinates_visible(self) -> bool:
+        """Return whether file/rank notation is painted on the board."""
+        return self._coordinates_visible
+
+    def set_coordinates_visible(self, visible: bool) -> None:
+        """Show or hide subtle in-board coordinate notation."""
+        if self._coordinates_visible == visible:
+            return
+        self._coordinates_visible = visible
+        self.coordinateVisibilityChanged.emit(visible)
+        self.update()
+
+    def toggle_coordinates(self) -> None:
+        """Toggle board coordinate notation visibility."""
+        self.set_coordinates_visible(not self._coordinates_visible)
+
+    @property
+    def coordinate_style(self) -> CoordinateStyle:
+        """Return the current coordinate overlay style."""
+        return self._coordinate_style
+
+    def set_coordinate_style(self, style: CoordinateStyle) -> None:
+        """Replace the coordinate overlay style without changing the theme."""
+        if self._coordinate_style == style:
+            return
+        self._coordinate_style = style
+        self.coordinateStyleChanged.emit(style)
         self.update()
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
@@ -141,25 +175,14 @@ class ChessBoardWidget(QWidget):
 
         outer_margin = side * self._theme.outer_margin_ratio
         available_side = max(0.0, side - (outer_margin * 2.0))
-        coordinate_margin = max(
-            float(self._theme.minimum_coordinate_margin),
-            available_side * self._theme.coordinate_margin_ratio,
-        )
-        coordinate_margin = min(coordinate_margin, available_side * 0.18)
-        squares_side = max(0.0, available_side - (coordinate_margin * 2.0))
+        squares_side = max(0.0, available_side)
 
         outer_rect = QRectF(x + outer_margin, y + outer_margin, available_side, available_side)
-        squares_rect = QRectF(
-            outer_rect.left() + coordinate_margin,
-            outer_rect.top() + coordinate_margin,
-            squares_side,
-            squares_side,
-        )
+        squares_rect = QRectF(outer_rect)
         return BoardLayout(
             outer_rect=outer_rect,
             squares_rect=squares_rect,
             square_size=squares_side / self.BOARD_SIZE if squares_side else 0.0,
-            coordinate_margin=coordinate_margin,
         )
 
     def _paint_background(self, painter: QPainter, layout: BoardLayout) -> None:
@@ -179,32 +202,49 @@ class ChessBoardWidget(QWidget):
                 painter.fillRect(square_rect, color)
 
     def _paint_coordinates(self, painter: QPainter, layout: BoardLayout) -> None:
-        font = QFont(self._theme.coordinate_font)
-        font.setPixelSize(max(10, int(layout.coordinate_margin * 0.48)))
+        if not self._coordinates_visible or layout.square_size <= 0:
+            return
+
+        style = self._coordinate_style
+        font = QFont(style.font)
+        font.setPixelSize(max(9, int(layout.square_size * 0.16)))
         painter.setFont(font)
-        painter.setPen(QPen(self._theme.coordinate_text))
 
         files = self._display_files()
         ranks = self._display_ranks()
+        inset = max(3.0, layout.square_size * style.edge_inset_ratio)
+
         for index, file_label in enumerate(files):
             x = layout.squares_rect.left() + (index * layout.square_size)
+            y = layout.squares_rect.bottom() - layout.square_size
             label_rect = QRectF(
-                x,
-                layout.squares_rect.bottom(),
-                layout.square_size,
-                layout.coordinate_margin,
+                x + inset,
+                y + layout.square_size - (layout.square_size * 0.32) - inset,
+                layout.square_size - (inset * 2.0),
+                layout.square_size * 0.32,
             )
-            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, file_label)
+            square_is_light = (index + (self.BOARD_SIZE - 1)) % 2 == 0
+            painter.setPen(QPen(self._coordinate_color(square_is_light)))
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, file_label)
 
         for index, rank_label in enumerate(ranks):
+            x = layout.squares_rect.left()
             y = layout.squares_rect.top() + (index * layout.square_size)
             label_rect = QRectF(
-                layout.outer_rect.left(),
-                y,
-                layout.coordinate_margin,
-                layout.square_size,
+                x + inset,
+                y + inset,
+                layout.square_size * 0.34,
+                layout.square_size * 0.30,
             )
-            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, rank_label)
+            square_is_light = index % 2 == 0
+            painter.setPen(QPen(self._coordinate_color(square_is_light)))
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, rank_label)
+
+    def _coordinate_color(self, square_is_light: bool) -> QColor:
+        style = self._coordinate_style
+        color = QColor(style.light_square_text if square_is_light else style.dark_square_text)
+        color.setAlphaF(max(0.0, min(1.0, style.opacity)))
+        return color
 
     def _paint_border(self, painter: QPainter, layout: BoardLayout) -> None:
         pen = QPen(self._theme.border)
