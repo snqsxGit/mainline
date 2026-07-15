@@ -117,10 +117,16 @@ class MainWindow(QMainWindow):
                 color: #66706a;
                 font-size: 14px;
             }
-            #home_card, #board_region, #drill_board_shell {
+            #home_card, #board_region, #drill_board_shell, #move_tree_panel {
                 background: #ffffff;
                 border: 1px solid #d9ded8;
                 border-radius: 10px;
+            }
+            #move_tree_view {
+                border: 1px solid #e1e6df;
+                border-radius: 8px;
+                padding: 4px;
+                background: #fbfcf9;
             }
             #repertoire_search {
                 padding: 8px 10px;

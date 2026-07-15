@@ -34,6 +34,7 @@ class ChessBoardWidget(QWidget):
     themeChanged = Signal(BoardTheme)
     coordinateVisibilityChanged = Signal(bool)
     coordinateStyleChanged = Signal(CoordinateStyle)
+    movePlayed = Signal(object)
     positionChanged = Signal(str)
 
     def __init__(
@@ -114,6 +115,14 @@ class ChessBoardWidget(QWidget):
     def toggle_coordinates(self) -> None:
         """Toggle board coordinate notation visibility."""
         self.set_coordinates_visible(not self._coordinates_visible)
+
+    def set_position(self, fen: str) -> None:
+        """Replace the displayed board position from FEN and clear interaction state."""
+        self._controller.set_fen(fen)
+        self._selected_square = None
+        self._legal_destinations = set()
+        self.positionChanged.emit(fen)
+        self.update()
 
     @property
     def coordinate_style(self) -> CoordinateStyle:
@@ -196,8 +205,7 @@ class ChessBoardWidget(QWidget):
         if square in self._legal_destinations:
             move = self._controller.legal_move_between(self._selected_square, square)
             if move is not None:
-                self._controller.push(move)
-                self.positionChanged.emit(self._controller.board.fen())
+                self.movePlayed.emit(move)
                 self._clear_selection()
                 return
 
