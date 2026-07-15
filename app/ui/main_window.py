@@ -63,7 +63,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._stack)
 
         self._home_screen.continueRequested.connect(self.show_workspace)
-        self._home_screen.openRepertoireRequested.connect(self.show_workspace)
         self._home_screen.createRepertoireRequested.connect(self.show_workspace)
         self._home_screen.drillRequested.connect(self.show_drill)
         self._home_screen.settingsRequested.connect(self._show_settings_placeholder)
@@ -79,10 +78,11 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(ScreenIndex.HOME)
         self.statusBar().showMessage("Home")
 
-    def show_workspace(self) -> None:
+    def show_workspace(self, repertoire_name: str = "Selected repertoire") -> None:
         """Navigate to the selected repertoire workspace."""
+        self._workspace_screen.set_repertoire_name(repertoire_name)
         self._stack.setCurrentIndex(ScreenIndex.WORKSPACE)
-        self.statusBar().showMessage("Workspace")
+        self.statusBar().showMessage(f"Workspace · {repertoire_name}")
 
     def show_drill(self) -> None:
         """Navigate to focused drill mode."""
@@ -121,6 +121,16 @@ class MainWindow(QMainWindow):
                 background: #ffffff;
                 border: 1px solid #d9ded8;
                 border-radius: 10px;
+            }
+            #repertoire_search {
+                padding: 8px 10px;
+                border: 1px solid #ccd4cc;
+                border-radius: 6px;
+            }
+            #recent_repertoire_list {
+                border: 1px solid #d9ded8;
+                border-radius: 8px;
+                padding: 6px;
             }
             #section_heading, #screen_heading {
                 color: #202421;

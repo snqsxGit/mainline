@@ -22,6 +22,22 @@ class BoardOrientation(Enum):
 
 
 @dataclass(frozen=True)
+class CoordinateStyle:
+    """Style values for in-board coordinate notation.
+
+    Coordinates are painted as an overlay on the playable squares, so they do
+    not affect board geometry. The opacity and edge inset keep labels readable
+    without competing with future pieces, highlights, arrows, or engine marks.
+    """
+
+    light_square_text: QColor = field(default_factory=lambda: QColor("#5F7550"))
+    dark_square_text: QColor = field(default_factory=lambda: QColor("#D7DFC0"))
+    opacity: float = 0.72
+    edge_inset_ratio: float = 0.11
+    font: QFont = field(default_factory=lambda: QFont("Sans Serif", 9))
+
+
+@dataclass(frozen=True)
 class BoardTheme:
     """Visual configuration used by :class:`ChessBoardWidget`.
 
@@ -33,9 +49,6 @@ class BoardTheme:
     light_square: QColor = field(default_factory=lambda: QColor("#EEEED2"))
     dark_square: QColor = field(default_factory=lambda: QColor("#769656"))
     border: QColor = field(default_factory=lambda: QColor("#2F3437"))
-    border_background: QColor = field(default_factory=lambda: QColor("#F0F0F0"))
-    coordinate_text: QColor = field(default_factory=lambda: QColor("#2F3437"))
-    coordinate_margin_ratio: float = 0.085
-    outer_margin_ratio: float = 0.025
-    minimum_coordinate_margin: int = 18
-    coordinate_font: QFont = field(default_factory=lambda: QFont("Sans Serif", 10))
+    border_background: QColor = field(default_factory=lambda: QColor("#F4F1E8"))
+    outer_margin_ratio: float = 0.008
+    coordinate_style: CoordinateStyle = field(default_factory=CoordinateStyle)
