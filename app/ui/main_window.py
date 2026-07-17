@@ -7,6 +7,7 @@ from enum import IntEnum
 from PySide6.QtWidgets import QMainWindow, QStackedWidget
 
 from app.ui.screens import DrillScreen, HomeScreen, WorkspaceScreen
+from app.ui.theme import AppTheme, DARK_THEME, stylesheet
 
 
 class ScreenIndex(IntEnum):
@@ -30,6 +31,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self.WINDOW_TITLE)
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
 
+        self._theme: AppTheme = DARK_THEME
         self._create_menu_bar()
         self._create_tool_bar()
         self._create_screens()
@@ -54,7 +56,7 @@ class MainWindow(QMainWindow):
         self._stack.setObjectName("main_screen_stack")
 
         self._home_screen = HomeScreen()
-        self._workspace_screen = WorkspaceScreen()
+        self._workspace_screen = WorkspaceScreen(theme=self._theme)
         self._drill_screen = DrillScreen()
 
         self._stack.addWidget(self._home_screen)
@@ -102,49 +104,5 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Next drill position will be added with drill logic")
 
     def _apply_style_sheet(self) -> None:
-        """Apply lightweight shell styling while keeping widgets conventional."""
-        self.setStyleSheet(
-            """
-            QMainWindow {
-                background: #f5f6f2;
-            }
-            #home_title {
-                font-size: 42px;
-                font-weight: 700;
-                color: #202421;
-            }
-            #home_subtitle, #muted_text {
-                color: #66706a;
-                font-size: 14px;
-            }
-            #home_card, #board_region, #drill_board_shell, #move_tree_panel {
-                background: #ffffff;
-                border: 1px solid #d9ded8;
-                border-radius: 10px;
-            }
-            #move_tree_view {
-                border: 1px solid #e1e6df;
-                border-radius: 8px;
-                padding: 4px;
-                background: #fbfcf9;
-            }
-            #repertoire_search {
-                padding: 8px 10px;
-                border: 1px solid #ccd4cc;
-                border-radius: 6px;
-            }
-            #recent_repertoire_list {
-                border: 1px solid #d9ded8;
-                border-radius: 8px;
-                padding: 6px;
-            }
-            #section_heading, #screen_heading {
-                color: #202421;
-                font-size: 20px;
-                font-weight: 650;
-            }
-            QPushButton {
-                padding: 8px 14px;
-            }
-            """
-        )
+        """Apply the active Mainline theme to the full application shell."""
+        self.setStyleSheet(stylesheet(self._theme))

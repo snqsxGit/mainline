@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import chess
-from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -54,12 +54,19 @@ class ChessBoardWidget(QWidget):
         self._controller = controller or ChessController()
         self._selected_square: chess.Square | None = None
         self._legal_destinations: set[chess.Square] = set()
+        self._hover_square: chess.Square | None = None
+        self._last_move: chess.Move | None = None
+        self._drag_origin: chess.Square | None = None
+        self._drag_piece: chess.Piece | None = None
+        self._drag_position = QPointF()
+        self._dragging = False
         self._board_renderer = BoardRenderer(self._theme)
         self._piece_renderer = PieceRenderer()
 
         self.setObjectName("chess_board_widget")
         self.setMinimumSize(280, 280)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMouseTracking(True)
 
     @property
     def controller(self) -> ChessController:
@@ -121,6 +128,7 @@ class ChessBoardWidget(QWidget):
         self._controller.set_fen(fen)
         self._selected_square = None
         self._legal_destinations = set()
+        self._last_move = self._controller.board.peek() if self._controller.board.move_stack else None
         self.positionChanged.emit(fen)
         self.update()
 
@@ -174,7 +182,62 @@ class ChessBoardWidget(QWidget):
         if square is None:
             self._clear_selection()
             return
+        if self._controller.has_selectable_piece(square):
+            self._select_square(square)
+            self._drag_origin = square
+            self._drag_piece = self._controller.piece_at(square)
+            self._drag_position = event.position()
+            self._dragging = False
+            return
         self._handle_square_click(square)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802, ANN001 - Qt override
+        """Track hover and drag feedback."""
+        square = self.square_at(event.position().toPoint())
+        if square != self._hover_square:
+            self._hover_square = square
+            self.update()
+        if self._drag_origin is not None and self._drag_piece is not None:
+            if not self._dragging and (event.position() - self._drag_position).manhattanLength() >= 6:
+                self._dragging = True
+            if self._dragging:
+                self._drag_position = event.position()
+                self.update()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802, ANN001 - Qt override
+        """Complete a drag move or fall back to click-to-move."""
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+        destination = self.square_at(event.position().toPoint())
+        origin = self._drag_origin
+        was_dragging = self._dragging
+        self._drag_origin = None
+        self._drag_piece = None
+        self._dragging = False
+        if was_dragging and origin is not None:
+            if destination in self._legal_destinations:
+                move = self._controller.legal_move_between(origin, destination)
+                if move is not None:
+                    self._last_move = move
+                    self.movePlayed.emit(move)
+            self._clear_selection()
+            return
+        if destination is not None and origin == destination:
+            self.update()
+            return
+        if destination is not None:
+            self._handle_square_click(destination)
+        else:
+            self._clear_selection()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802, ANN001 - Qt override
+        """Clear hover feedback when the cursor leaves the board."""
+        del event
+        self._hover_square = None
+        self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802, ANN001 - Qt override
         """Render the complete board using Qt painting."""
@@ -186,9 +249,10 @@ class ChessBoardWidget(QWidget):
         layout = self._calculate_layout()
         rects = self._display_square_rects(layout)
         self._paint_background(painter, layout)
-        self._board_renderer.paint_squares(painter, rects)
+        self._board_renderer.paint_squares(painter, rects, layout.squares_rect)
         self._paint_highlights(painter, layout)
         self._paint_pieces(painter, layout)
+        self._paint_dragged_piece(painter, layout)
         self._paint_coordinates(painter, layout)
         self._paint_border(painter, layout)
 
@@ -252,11 +316,15 @@ class ChessBoardWidget(QWidget):
         ]
 
     def _paint_background(self, painter: QPainter, layout: BoardLayout) -> None:
-        painter.fillRect(layout.outer_rect, self._theme.border_background)
+        painter.fillPath(self._board_renderer.rounded_path(layout.outer_rect), self._theme.border_background)
 
     def _paint_highlights(self, painter: QPainter, layout: BoardLayout) -> None:
         selected_rect = self._square_rect(layout, self._selected_square) if self._selected_square is not None else None
-        self._board_renderer.paint_selection(painter, selected_rect)
+        for square in ((self._last_move.from_square, self._last_move.to_square) if self._last_move else ()): 
+            self._board_renderer.paint_overlay(painter, self._square_rect(layout, square), self._theme.last_move_color)
+        hover_rect = self._square_rect(layout, self._hover_square) if self._hover_square is not None else None
+        self._board_renderer.paint_overlay(painter, hover_rect, self._theme.hover_color)
+        self._board_renderer.paint_overlay(painter, selected_rect, self._theme.selected_color)
         self._board_renderer.paint_destinations(
             painter,
             [self._square_rect(layout, square) for square in self._legal_destinations],
@@ -264,7 +332,17 @@ class ChessBoardWidget(QWidget):
 
     def _paint_pieces(self, painter: QPainter, layout: BoardLayout) -> None:
         for square, piece in self._controller.board.piece_map().items():
-            self._piece_renderer.draw_piece(painter, piece, self._square_rect(layout, square))
+            if self._dragging and square == self._drag_origin:
+                self._piece_renderer.draw_piece(painter, piece, self._square_rect(layout, square), opacity=0.28)
+            else:
+                self._piece_renderer.draw_piece(painter, piece, self._square_rect(layout, square))
+
+    def _paint_dragged_piece(self, painter: QPainter, layout: BoardLayout) -> None:
+        if not self._dragging or self._drag_piece is None or layout.square_size <= 0:
+            return
+        half = layout.square_size / 2.0
+        rect = QRectF(self._drag_position.x() - half, self._drag_position.y() - half, layout.square_size, layout.square_size)
+        self._piece_renderer.draw_piece(painter, self._drag_piece, rect)
 
     def _square_rect(self, layout: BoardLayout, square: chess.Square) -> QRectF:
         display_file, display_rank = self._square_to_display(square)
@@ -333,8 +411,7 @@ class ChessBoardWidget(QWidget):
         pen.setWidthF(max(1.0, layout.outer_rect.width() * 0.004))
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(layout.outer_rect)
-        painter.drawRect(layout.squares_rect)
+        painter.drawPath(self._board_renderer.rounded_path(layout.outer_rect))
 
     def _display_files(self) -> tuple[str, ...]:
         return self.FILES if self._orientation is BoardOrientation.WHITE_AT_BOTTOM else tuple(reversed(self.FILES))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import chess
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from app.chess.move_tree import MoveTreeModel, MoveTreeNode
@@ -22,6 +23,9 @@ class MoveTreeWidget(QWidget):
         self._tree = QTreeWidget()
         self._tree.setObjectName("move_tree_view")
         self._tree.setHeaderHidden(True)
+        self._tree.setIndentation(16)
+        self._tree.setUniformRowHeights(True)
+        self._tree.setAlternatingRowColors(True)
         self._tree.itemClicked.connect(self._handle_item_clicked)
 
         layout = QVBoxLayout(self)
@@ -40,6 +44,7 @@ class MoveTreeWidget(QWidget):
         if self._model is None:
             return
         root_item = QTreeWidgetItem(["Starting position"])
+        root_item.setFont(0, self._item_font(is_mainline=True))
         root_item.setData(0, Qt.ItemDataRole.UserRole, self._model.root)
         self._tree.addTopLevelItem(root_item)
         self._node_items[id(self._model.root)] = root_item
@@ -68,10 +73,18 @@ class MoveTreeWidget(QWidget):
             if variation_index > 0:
                 label = f"↳ {label}"
             item = QTreeWidgetItem([label])
+            item.setFont(0, self._item_font(is_mainline=variation_index == 0))
+            if variation_index > 0:
+                item.setForeground(0, QBrush(QColor("#8F9AA3")))
             item.setData(0, Qt.ItemDataRole.UserRole, child)
             parent_item.addChild(item)
             self._node_items[id(child)] = item
             self._add_children(item, child)
+
+    def _item_font(self, *, is_mainline: bool) -> QFont:
+        font = QFont("Segoe UI", 10)
+        font.setWeight(QFont.Weight.DemiBold if is_mainline else QFont.Weight.Normal)
+        return font
 
     def _handle_item_clicked(self, item: QTreeWidgetItem) -> None:
         node = item.data(0, Qt.ItemDataRole.UserRole)
