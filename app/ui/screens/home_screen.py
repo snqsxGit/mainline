@@ -27,6 +27,7 @@ class HomeScreen(QWidget):
     deleteRepertoireRequested = Signal(int)
     drillRequested = Signal()
     settingsRequested = Signal()
+    importPgnRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Create the home dashboard without workspace/editor chrome."""
@@ -82,12 +83,16 @@ class HomeScreen(QWidget):
         self._repertoire_list = QListWidget()
         self._repertoire_list.setObjectName("recent_repertoire_list")
         self._repertoire_list.itemDoubleClicked.connect(self._open_repertoire_item)
-        self._repertoire_list.currentItemChanged.connect(self._update_continue_button)
+        self._repertoire_list.currentItemChanged.connect(self._update_selected_card)
 
         self._empty_state = QLabel("No repertoires yet. Create one to start building your opening files.")
         self._empty_state.setObjectName("muted_text")
         self._empty_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_state.setWordWrap(True)
+
+        self._selected_card = QLabel("Select a repertoire to see study details.")
+        self._selected_card.setObjectName("muted_text")
+        self._selected_card.setWordWrap(True)
 
         self._continue_button = QPushButton("Continue Selected Repertoire")
         self._continue_button.clicked.connect(self._continue_selected_repertoire)
@@ -97,6 +102,7 @@ class HomeScreen(QWidget):
         layout.addWidget(self._search_box)
         layout.addWidget(self._repertoire_list, 1)
         layout.addWidget(self._empty_state, 1)
+        layout.addWidget(self._selected_card)
         layout.addWidget(self._continue_button)
         return panel
 
@@ -114,7 +120,9 @@ class HomeScreen(QWidget):
         layout.addWidget(heading)
 
         buttons = [
+            ("Continue", self._continue_selected_repertoire),
             ("Create New Repertoire", self.createRepertoireRequested),
+            ("Import PGN", self.importPgnRequested),
             ("Rename Selected", self._rename_selected_repertoire),
             ("Delete Selected", self._delete_selected_repertoire),
             ("Enter Drill Mode", self.drillRequested),
@@ -148,10 +156,20 @@ class HomeScreen(QWidget):
         self._empty_state.setVisible(not has_items)
         if has_items:
             self._repertoire_list.setCurrentRow(0)
-        self._update_continue_button()
+        self._update_selected_card()
 
-    def _update_continue_button(self, *args: object) -> None:
-        self._continue_button.setEnabled(self._repertoire_list.currentItem() is not None)
+    def _update_selected_card(self, *args: object) -> None:
+        item = self._repertoire_list.currentItem()
+        self._continue_button.setEnabled(item is not None)
+        if item is None:
+            self._selected_card.setText("Select a repertoire to see study details.")
+            return
+        repertoire_id = int(item.data(Qt.ItemDataRole.UserRole))
+        rep = next((rep for rep in self._repertoires if rep.id == repertoire_id), None)
+        if rep is not None:
+            self._selected_card.setText(
+                f"Selected: {rep.name}\nSide: {rep.side.title()}\nLast opened: {rep.updated_at}"
+            )
 
     def _continue_selected_repertoire(self) -> None:
         current_item = self._repertoire_list.currentItem()

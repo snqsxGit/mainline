@@ -48,3 +48,24 @@ def test_illegal_move_is_rejected():
 
     with pytest.raises(ValueError):
         model.add_move(chess.Move.from_uci("e7e5"))
+
+
+def test_pgn_round_trip_preserves_variations_and_comments() -> None:
+    model = MoveTreeModel.from_pgn('1. e4 (1. d4 {queen pawn}) e5 2. Nf3 *')
+
+    assert [child.san for child in model.root.children] == ["e4", "d4"]
+    assert model.root.children[1].comments == ["queen pawn"]
+
+    exported = model.to_pgn()
+    restored = MoveTreeModel.from_pgn(exported)
+    assert [child.san for child in restored.root.children] == ["e4", "d4"]
+    assert restored.root.children[1].comments == ["queen pawn"]
+
+
+def test_promote_to_mainline_reorders_sibling_variation() -> None:
+    model = MoveTreeModel.from_pgn('1. e4 (1. d4) e5 *')
+
+    promoted = model.promote_to_mainline(model.root.children[1])
+
+    assert promoted.san == "d4"
+    assert [child.san for child in model.root.children] == ["d4", "e4"]

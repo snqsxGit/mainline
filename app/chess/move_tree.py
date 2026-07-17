@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from io import StringIO
 
 import chess
+import chess.pgn
 
 
 @dataclass
@@ -125,3 +127,84 @@ class MoveTreeModel:
         if index < len(parent.children) - 1:
             self.current_node = parent.children[index + 1]
         return self.current_node
+
+    def promote_to_mainline(self, node: MoveTreeNode | None = None) -> MoveTreeNode:
+        """Move ``node`` to the first child slot under its parent."""
+        node = node or self.current_node
+        parent = node.parent
+        if parent is None or parent.children[0] is node:
+            return node
+        parent.children.remove(node)
+        parent.children.insert(0, node)
+        self.current_node = node
+        return node
+
+    def delete_node(self, node: MoveTreeNode | None = None) -> MoveTreeNode:
+        """Delete ``node`` and its descendants, selecting the parent position."""
+        node = node or self.current_node
+        parent = node.parent
+        if parent is None:
+            return node
+        parent.children.remove(node)
+        self.current_node = parent
+        return parent
+
+    def node_count(self) -> int:
+        """Return the number of positions in the tree, including the root."""
+        count = 0
+        stack = [self.root]
+        while stack:
+            current = stack.pop()
+            count += 1
+            stack.extend(current.children)
+        return count
+
+    def to_pgn(self) -> str:
+        """Serialize the full tree, including variations and comments, as PGN."""
+        game = chess.pgn.Game()
+        game.headers["Event"] = "Mainline repertoire"
+        game.setup(chess.Board(self.root.fen))
+
+        def copy_children(source: MoveTreeNode, target: chess.pgn.GameNode) -> None:
+            for child in source.children:
+                variation = target.add_variation(child.move) if child.move else target
+                variation.comment = "\n".join(child.comments)
+                for nag in child.nags:
+                    variation.nags.add(nag)
+                copy_children(child, variation)
+
+        copy_children(self.root, game)
+        exporter = chess.pgn.StringExporter(headers=True, variations=True, comments=True)
+        return game.accept(exporter)
+
+    @classmethod
+    def from_pgn(cls, pgn_text: str) -> "MoveTreeModel":
+        """Create a move tree from the first game in ``pgn_text`` using python-chess."""
+        game = chess.pgn.read_game(StringIO(pgn_text))
+        if game is None:
+            raise ValueError("No PGN game found")
+        board = game.board()
+        tree = cls(board.fen())
+
+        def import_children(pgn_node: chess.pgn.GameNode, tree_node: MoveTreeNode, board: chess.Board) -> None:
+            for variation in pgn_node.variations:
+                move = variation.move
+                san = board.san(move)
+                move_number = board.fullmove_number
+                next_board = board.copy(stack=False)
+                next_board.push(move)
+                child = MoveTreeNode(
+                    fen=next_board.fen(),
+                    parent=tree_node,
+                    move=move,
+                    san=san,
+                    move_number=move_number,
+                    comments=[variation.comment] if variation.comment else [],
+                    nags=set(variation.nags),
+                )
+                tree_node.children.append(child)
+                import_children(variation, child, next_board)
+
+        import_children(game, tree.root, board)
+        tree.current_node = tree.root
+        return tree

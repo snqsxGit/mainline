@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 from PySide6.QtGui import QColor
@@ -19,7 +19,7 @@ class ThemeName(Enum):
 
 @dataclass(frozen=True)
 class AppTheme:
-    """Complete UI theme definition for app chrome and chessboard."""
+    """Application chrome theme; board styling lives in DEFAULT_BOARD_THEME."""
 
     name: ThemeName
     background: str
@@ -37,8 +37,26 @@ class AppTheme:
     button_hover: str
     button_pressed: str
     selection: str
-    board: BoardTheme = field(default_factory=BoardTheme)
 
+
+DEFAULT_BOARD_THEME = BoardTheme(
+    light_square=QColor("#EEE7D2"),
+    dark_square=QColor("#78945C"),
+    border=QColor("#2F3437"),
+    border_background=QColor("#F4F1E8"),
+    outer_margin_ratio=0.01,
+    corner_radius_ratio=0.018,
+    selected_color=QColor(255, 222, 93, 115),
+    destination_color=QColor(35, 70, 38, 105),
+    hover_color=QColor(255, 255, 255, 54),
+    last_move_color=QColor(255, 235, 117, 86),
+    coordinate_style=CoordinateStyle(
+        light_square_text=QColor("#66745C"),
+        dark_square_text=QColor("#E3EBCF"),
+        opacity=0.64,
+        edge_inset_ratio=0.09,
+    ),
+)
 
 LIGHT_THEME = AppTheme(
     name=ThemeName.LIGHT,
@@ -57,24 +75,6 @@ LIGHT_THEME = AppTheme(
     button_hover="#EEF3EC",
     button_pressed="#E4EBE2",
     selection="#DCE7FF",
-    board=BoardTheme(
-        light_square=QColor("#EEE7D2"),
-        dark_square=QColor("#7A9460"),
-        border=QColor("#D8DED2"),
-        border_background=QColor("#FFFFFF"),
-        outer_margin_ratio=0.01,
-        corner_radius_ratio=0.018,
-        selected_color=QColor(255, 222, 93, 115),
-        destination_color=QColor(35, 70, 38, 105),
-        hover_color=QColor(255, 255, 255, 58),
-        last_move_color=QColor(255, 235, 117, 88),
-        coordinate_style=CoordinateStyle(
-            light_square_text=QColor("#66745C"),
-            dark_square_text=QColor("#E3EBCF"),
-            opacity=0.62,
-            edge_inset_ratio=0.09,
-        ),
-    ),
 )
 
 DARK_THEME = AppTheme(
@@ -94,24 +94,6 @@ DARK_THEME = AppTheme(
     button_hover="#394148",
     button_pressed="#252B30",
     selection="#344568",
-    board=BoardTheme(
-        light_square=QColor("#B9C0A4"),
-        dark_square=QColor("#5E7354"),
-        border=QColor("#3A4248"),
-        border_background=QColor("#2A3035"),
-        outer_margin_ratio=0.01,
-        corner_radius_ratio=0.018,
-        selected_color=QColor(255, 214, 89, 112),
-        destination_color=QColor(18, 33, 23, 125),
-        hover_color=QColor(255, 255, 255, 42),
-        last_move_color=QColor(255, 226, 102, 76),
-        coordinate_style=CoordinateStyle(
-            light_square_text=QColor("#586250"),
-            dark_square_text=QColor("#D8DEC9"),
-            opacity=0.58,
-            edge_inset_ratio=0.09,
-        ),
-    ),
 )
 
 THEMES = {ThemeName.LIGHT: LIGHT_THEME, ThemeName.DARK: DARK_THEME}

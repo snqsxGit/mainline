@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from enum import IntEnum
 
-from PySide6.QtWidgets import QInputDialog, QMainWindow, QMessageBox, QStackedWidget
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import QFileDialog, QInputDialog, QMainWindow, QMessageBox, QStackedWidget
 
 from app.models import LoadedRepertoire
 from app.services import PersistenceService
 from app.ui.screens import DrillScreen, HomeScreen, WorkspaceScreen
-from app.ui.theme import AppTheme, DARK_THEME, stylesheet
+from app.ui.theme import AppTheme, DARK_THEME, LIGHT_THEME, stylesheet
 
 
 class ScreenIndex(IntEnum):
@@ -45,12 +46,41 @@ class MainWindow(QMainWindow):
         self._restore_last_repertoire()
 
     def _create_menu_bar(self) -> None:
-        """Create the top-level menu categories for future actions."""
+        """Create the desktop menu bar and wire practical study actions."""
         menu_bar = self.menuBar()
-        menu_bar.addMenu("File")
-        menu_bar.addMenu("Edit")
-        menu_bar.addMenu("View")
-        menu_bar.addMenu("Help")
+        file_menu = menu_bar.addMenu("File")
+        edit_menu = menu_bar.addMenu("Edit")
+        view_menu = menu_bar.addMenu("View")
+        study_menu = menu_bar.addMenu("Study")
+        tools_menu = menu_bar.addMenu("Tools")
+        help_menu = menu_bar.addMenu("Help")
+
+        self.new_repertoire_action = QAction("New Repertoire", self)
+        self.new_repertoire_action.triggered.connect(self.create_repertoire)
+        self.open_repertoire_action = QAction("Open Repertoire", self)
+        self.open_repertoire_action.triggered.connect(self.show_home)
+        self.import_pgn_action = QAction("Import PGN…", self)
+        self.import_pgn_action.triggered.connect(self.import_pgn)
+        self.export_pgn_action = QAction("Export PGN…", self)
+        self.export_pgn_action.triggered.connect(self.export_pgn)
+        quit_action = QAction("Quit", self)
+        quit_action.setShortcut(QKeySequence("Ctrl+Q"))
+        quit_action.triggered.connect(self.close)
+        for action in [self.new_repertoire_action, self.open_repertoire_action, self.import_pgn_action, self.export_pgn_action, quit_action]:
+            file_menu.addAction(action)
+
+        # Workspace actions are available after screen construction; placeholders are populated there.
+        self._edit_menu = edit_menu
+        self._view_menu = view_menu
+        self._study_menu = study_menu
+        settings_action = QAction("Settings", self)
+        settings_action.triggered.connect(self._show_settings_placeholder)
+        themes_action = QAction("Manage Themes", self)
+        themes_action.triggered.connect(self._toggle_app_theme)
+        tools_menu.addActions([settings_action, themes_action])
+        about_action = QAction("About Mainline", self)
+        about_action.triggered.connect(lambda: QMessageBox.about(self, "About Mainline", "Mainline chess opening trainer"))
+        help_menu.addAction(about_action)
 
     def _create_tool_bar(self) -> None:
         """Create an empty toolbar that will host common actions later."""
@@ -76,6 +106,7 @@ class MainWindow(QMainWindow):
         self._home_screen.deleteRepertoireRequested.connect(self.delete_repertoire)
         self._home_screen.drillRequested.connect(self.show_drill)
         self._home_screen.settingsRequested.connect(self._show_settings_placeholder)
+        self._home_screen.importPgnRequested.connect(self.import_pgn)
         self._workspace_screen.backHomeRequested.connect(self.show_home)
         self._workspace_screen.startDrillRequested.connect(self.show_drill)
         self._workspace_screen.repertoireChanged.connect(self._save_current_workspace)
@@ -84,6 +115,12 @@ class MainWindow(QMainWindow):
         self._drill_screen.exitHomeRequested.connect(self.show_home)
         self._drill_screen.showAnswerRequested.connect(self._show_answer_placeholder)
         self._drill_screen.nextRequested.connect(self._next_drill_placeholder)
+
+        self._edit_menu.addActions([self._workspace_screen.undo_action, self._workspace_screen.redo_action])
+        self._edit_menu.addSeparator()
+        self._edit_menu.addActions([self._workspace_screen.copy_fen_action, self._workspace_screen.copy_pgn_action])
+        self._view_menu.addActions([self._workspace_screen.flip_action, self._workspace_screen.focus_action, self._workspace_screen.fullscreen_action, self._workspace_screen.theme_action])
+        self._study_menu.addActions([self._workspace_screen.drill_action, self._workspace_screen.engine_action, self._workspace_screen.promote_action])
 
     def show_home(self) -> None:
         """Navigate to the repertoire manager dashboard."""
@@ -161,7 +198,7 @@ class MainWindow(QMainWindow):
     def _load_workspace(self, loaded: LoadedRepertoire) -> None:
         self._is_loading_workspace = True
         self._current_repertoire_id = loaded.id
-        self._workspace_screen.load_repertoire(loaded.name, loaded.tree, loaded.selected_node)
+        self._workspace_screen.load_repertoire(loaded.name, loaded.tree, loaded.selected_node, side=loaded.side)
         self._is_loading_workspace = False
         self._stack.setCurrentIndex(ScreenIndex.WORKSPACE)
         self.statusBar().showMessage(f"Workspace · {loaded.name}")
@@ -204,3 +241,33 @@ class MainWindow(QMainWindow):
     def _apply_style_sheet(self) -> None:
         """Apply the active Mainline theme to the full application shell."""
         self.setStyleSheet(stylesheet(self._theme))
+
+    def import_pgn(self) -> None:
+        """Import a PGN file into the current or a new workspace."""
+        path, _ = QFileDialog.getOpenFileName(self, "Import PGN", "", "PGN files (*.pgn);;All files (*)")
+        if not path:
+            return
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        if self._current_repertoire_id is None:
+            loaded = self._persistence.create_repertoire(path.rsplit("/", 1)[-1].rsplit(".", 1)[0])
+            self._current_repertoire_id = loaded.id
+        self._workspace_screen.import_pgn_text(text, name=path.rsplit("/", 1)[-1].rsplit(".", 1)[0])
+        self._save_current_workspace()
+        self.show_workspace()
+
+    def export_pgn(self) -> None:
+        """Export the current workspace tree to a PGN file."""
+        if self._current_repertoire_id is None:
+            self.statusBar().showMessage("Open a repertoire before exporting PGN")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export PGN", f"{self._workspace_screen._repertoire_name}.pgn", "PGN files (*.pgn);;All files (*)")
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(self._workspace_screen.export_pgn_text())
+        self.statusBar().showMessage(f"Exported PGN to {path}")
+
+    def _toggle_app_theme(self) -> None:
+        self._theme = LIGHT_THEME if self._theme is DARK_THEME else DARK_THEME
+        self._apply_style_sheet()
