@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from enum import IntEnum
 
-from PySide6.QtWidgets import QMainWindow, QStackedWidget
+from PySide6.QtWidgets import QInputDialog, QMainWindow, QMessageBox, QStackedWidget
 
+from app.models import LoadedRepertoire
+from app.services import PersistenceService
 from app.ui.screens import DrillScreen, HomeScreen, WorkspaceScreen
 from app.ui.theme import AppTheme, DARK_THEME, stylesheet
 
@@ -26,17 +28,21 @@ class MainWindow(QMainWindow):
     DEFAULT_HEIGHT = 900
 
     def __init__(self) -> None:
-        """Initialize menus, screens, and navigation signal wiring."""
+        """Initialize menus, screens, persistence, and navigation signal wiring."""
         super().__init__()
         self.setWindowTitle(self.WINDOW_TITLE)
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
 
         self._theme: AppTheme = DARK_THEME
+        self._persistence = PersistenceService()
+        self._current_repertoire_id: int | None = None
+        self._is_loading_workspace = False
         self._create_menu_bar()
         self._create_tool_bar()
         self._create_screens()
         self._apply_style_sheet()
-        self.statusBar().showMessage("Home")
+        self._refresh_home_repertoires()
+        self._restore_last_repertoire()
 
     def _create_menu_bar(self) -> None:
         """Create the top-level menu categories for future actions."""
@@ -64,32 +70,124 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._drill_screen)
         self.setCentralWidget(self._stack)
 
-        self._home_screen.continueRequested.connect(self.show_workspace)
-        self._home_screen.createRepertoireRequested.connect(self.show_workspace)
+        self._home_screen.continueRequested.connect(self.open_repertoire)
+        self._home_screen.createRepertoireRequested.connect(self.create_repertoire)
+        self._home_screen.renameRepertoireRequested.connect(self.rename_repertoire)
+        self._home_screen.deleteRepertoireRequested.connect(self.delete_repertoire)
         self._home_screen.drillRequested.connect(self.show_drill)
         self._home_screen.settingsRequested.connect(self._show_settings_placeholder)
         self._workspace_screen.backHomeRequested.connect(self.show_home)
         self._workspace_screen.startDrillRequested.connect(self.show_drill)
+        self._workspace_screen.repertoireChanged.connect(self._save_current_workspace)
+        self._workspace_screen.currentNodeChanged.connect(self._save_current_position)
         self._drill_screen.backWorkspaceRequested.connect(self.show_workspace)
         self._drill_screen.exitHomeRequested.connect(self.show_home)
         self._drill_screen.showAnswerRequested.connect(self._show_answer_placeholder)
         self._drill_screen.nextRequested.connect(self._next_drill_placeholder)
 
     def show_home(self) -> None:
-        """Navigate to the launcher dashboard."""
+        """Navigate to the repertoire manager dashboard."""
+        self._refresh_home_repertoires()
         self._stack.setCurrentIndex(ScreenIndex.HOME)
         self.statusBar().showMessage("Home")
 
-    def show_workspace(self, repertoire_name: str = "Selected repertoire") -> None:
-        """Navigate to the selected repertoire workspace."""
-        self._workspace_screen.set_repertoire_name(repertoire_name)
+    def show_workspace(self) -> None:
+        """Navigate to the current repertoire workspace."""
         self._stack.setCurrentIndex(ScreenIndex.WORKSPACE)
-        self.statusBar().showMessage(f"Workspace · {repertoire_name}")
+        self.statusBar().showMessage("Workspace")
 
     def show_drill(self) -> None:
         """Navigate to focused drill mode."""
         self._stack.setCurrentIndex(ScreenIndex.DRILL)
         self.statusBar().showMessage("Drill mode")
+
+    def create_repertoire(self) -> None:
+        """Prompt for and create a new persisted repertoire."""
+        name, accepted = QInputDialog.getText(self, "Create Repertoire", "Repertoire name:")
+        if not accepted:
+            return
+        loaded = self._persistence.create_repertoire(name)
+        self._refresh_home_repertoires()
+        self._load_workspace(loaded)
+
+    def open_repertoire(self, repertoire_id: int) -> None:
+        """Load a persisted repertoire into the workspace."""
+        loaded = self._persistence.load_repertoire(repertoire_id)
+        if loaded is None:
+            QMessageBox.warning(self, "Repertoire Missing", "That repertoire no longer exists.")
+            self._refresh_home_repertoires()
+            return
+        self._load_workspace(loaded)
+
+    def rename_repertoire(self, repertoire_id: int) -> None:
+        """Prompt for a new repertoire name and persist it."""
+        current = next((rep for rep in self._persistence.list_repertoires() if rep.id == repertoire_id), None)
+        if current is None:
+            return
+        name, accepted = QInputDialog.getText(self, "Rename Repertoire", "Repertoire name:", text=current.name)
+        if not accepted:
+            return
+        renamed = self._persistence.rename_repertoire(repertoire_id, name)
+        if self._current_repertoire_id == repertoire_id:
+            self._workspace_screen.set_repertoire_name(renamed.name)
+        self._refresh_home_repertoires()
+
+    def delete_repertoire(self, repertoire_id: int) -> None:
+        """Confirm and delete a repertoire from SQLite."""
+        current = next((rep for rep in self._persistence.list_repertoires() if rep.id == repertoire_id), None)
+        if current is None:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete Repertoire",
+            f"Delete '{current.name}'? This cannot be undone.",
+            QMessageBox.StandardButton.Delete | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Delete:
+            return
+        self._persistence.delete_repertoire(repertoire_id)
+        if self._current_repertoire_id == repertoire_id:
+            self._current_repertoire_id = None
+            self.show_home()
+        self._refresh_home_repertoires()
+
+    def closeEvent(self, event: object) -> None:
+        """Flush current workspace state and close persistence resources."""
+        self._save_current_workspace()
+        self._persistence.close()
+        super().closeEvent(event)
+
+    def _load_workspace(self, loaded: LoadedRepertoire) -> None:
+        self._is_loading_workspace = True
+        self._current_repertoire_id = loaded.id
+        self._workspace_screen.load_repertoire(loaded.name, loaded.tree, loaded.selected_node)
+        self._is_loading_workspace = False
+        self._stack.setCurrentIndex(ScreenIndex.WORKSPACE)
+        self.statusBar().showMessage(f"Workspace · {loaded.name}")
+
+    def _restore_last_repertoire(self) -> None:
+        loaded = self._persistence.load_last_repertoire()
+        if loaded is None:
+            self.show_home()
+            return
+        self._load_workspace(loaded)
+
+    def _refresh_home_repertoires(self) -> None:
+        self._home_screen.set_repertoires(self._persistence.list_repertoires())
+
+    def _save_current_workspace(self) -> None:
+        if self._is_loading_workspace or self._current_repertoire_id is None:
+            return
+        self._persistence.save_repertoire_tree(
+            self._current_repertoire_id,
+            self._workspace_screen.move_tree_model,
+            self._workspace_screen.current_node,
+        )
+        self._refresh_home_repertoires()
+
+    def _save_current_position(self, _node: object) -> None:
+        self._save_current_workspace()
 
     def _show_settings_placeholder(self) -> None:
         """Reserve a navigation hook for a future settings screen/dialog."""

@@ -20,19 +20,19 @@ from PySide6.QtWidgets import (
 class HomeScreen(QWidget):
     """Launcher-style start screen for repertoire and training entry points."""
 
-    continueRequested = Signal(str)
-    repertoireSelected = Signal(str)
+    continueRequested = Signal(int)
+    repertoireSelected = Signal(int)
     createRepertoireRequested = Signal()
+    renameRepertoireRequested = Signal(int)
+    deleteRepertoireRequested = Signal(int)
     drillRequested = Signal()
     settingsRequested = Signal()
-
-    DEFAULT_REPERTOIRES = ("White repertoire", "Black repertoire", "Endgame sparring lines")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Create the home dashboard without workspace/editor chrome."""
         super().__init__(parent)
         self.setObjectName("home_screen")
-        self._repertoires = list(self.DEFAULT_REPERTOIRES)
+        self._repertoires = []
         self._build_ui()
         self._refresh_repertoire_list()
 
@@ -115,14 +115,15 @@ class HomeScreen(QWidget):
 
         buttons = [
             ("Create New Repertoire", self.createRepertoireRequested),
-            ("Continue Training", self.drillRequested),
+            ("Rename Selected", self._rename_selected_repertoire),
+            ("Delete Selected", self._delete_selected_repertoire),
             ("Enter Drill Mode", self.drillRequested),
             ("Settings", self.settingsRequested),
         ]
         for text, signal in buttons:
             button = QPushButton(text)
             button.setMinimumHeight(42)
-            button.clicked.connect(signal.emit)
+            button.clicked.connect(signal.emit if hasattr(signal, "emit") else signal)
             layout.addWidget(button)
 
         layout.addStretch(1)
@@ -134,12 +135,12 @@ class HomeScreen(QWidget):
 
     def _refresh_repertoire_list(self) -> None:
         query = self._search_box.text().strip().lower() if hasattr(self, "_search_box") else ""
-        visible_repertoires = [name for name in self._repertoires if query in name.lower()]
+        visible_repertoires = [rep for rep in self._repertoires if query in rep.name.lower()]
 
         self._repertoire_list.clear()
-        for name in visible_repertoires:
-            item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, name)
+        for rep in visible_repertoires:
+            item = QListWidgetItem(f"{rep.name} · {rep.side.title()}")
+            item.setData(Qt.ItemDataRole.UserRole, rep.id)
             self._repertoire_list.addItem(item)
 
         has_items = self._repertoire_list.count() > 0
@@ -159,6 +160,28 @@ class HomeScreen(QWidget):
         self._open_repertoire_item(current_item)
 
     def _open_repertoire_item(self, item: QListWidgetItem) -> None:
-        repertoire_name = item.data(Qt.ItemDataRole.UserRole) or item.text()
-        self.repertoireSelected.emit(repertoire_name)
-        self.continueRequested.emit(repertoire_name)
+        repertoire_id = int(item.data(Qt.ItemDataRole.UserRole))
+        self.repertoireSelected.emit(repertoire_id)
+        self.continueRequested.emit(repertoire_id)
+
+    def set_repertoires(self, repertoires: list[object]) -> None:
+        """Replace the displayed repertoire list with persisted summaries."""
+        self._repertoires = list(repertoires)
+        self._refresh_repertoire_list()
+
+    def selected_repertoire_id(self) -> int | None:
+        """Return the selected repertoire id, if any."""
+        current_item = self._repertoire_list.currentItem()
+        if current_item is None:
+            return None
+        return int(current_item.data(Qt.ItemDataRole.UserRole))
+
+    def _rename_selected_repertoire(self) -> None:
+        repertoire_id = self.selected_repertoire_id()
+        if repertoire_id is not None:
+            self.renameRepertoireRequested.emit(repertoire_id)
+
+    def _delete_selected_repertoire(self) -> None:
+        repertoire_id = self.selected_repertoire_id()
+        if repertoire_id is not None:
+            self.deleteRepertoireRequested.emit(repertoire_id)
