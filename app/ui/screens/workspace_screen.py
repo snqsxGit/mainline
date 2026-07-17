@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButto
 from app.chess import MoveTreeModel, MoveTreeNode
 from app.ui.board import ChessBoardWidget
 from app.ui.widgets import MoveTreeWidget, PlaceholderPanel
+from app.ui.theme import AppTheme, DARK_THEME, LIGHT_THEME, stylesheet
 
 
 class WorkspaceScreen(QWidget):
@@ -17,11 +18,13 @@ class WorkspaceScreen(QWidget):
     backHomeRequested = Signal()
     startDrillRequested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, theme: AppTheme | None = None) -> None:
         """Create the workspace with board, move tree, and editor actions."""
         super().__init__(parent)
         self.setObjectName("workspace_screen")
-        self._board = ChessBoardWidget()
+        self._theme = theme or DARK_THEME
+        self._focus_mode = False
+        self._board = ChessBoardWidget(theme=self._theme.board)
         self._move_tree_model = MoveTreeModel()
         self._move_tree = MoveTreeWidget()
         self._repertoire_name = "Selected repertoire"
@@ -62,17 +65,29 @@ class WorkspaceScreen(QWidget):
         self.next_variation_action.setShortcut(QKeySequence(Qt.KeyboardModifier.ShiftModifier | Qt.Key.Key_Right))
         self.next_variation_action.triggered.connect(lambda: self._navigate_to(self._move_tree_model.next_variation()))
 
-        self.flip_action = QAction("Flip Board", self)
+        self.flip_action = QAction("↻", self)
+        self.flip_action.setToolTip("Flip board (F)")
         self.flip_action.setShortcut(QKeySequence("F"))
         self.flip_action.triggered.connect(self._board.flip_orientation)
 
-        self.fullscreen_action = QAction("Toggle Fullscreen", self)
+        self.fullscreen_action = QAction("⛶", self)
+        self.fullscreen_action.setToolTip("Toggle fullscreen (F11)")
         self.fullscreen_action.setShortcut(QKeySequence("F11"))
         self.fullscreen_action.triggered.connect(self._toggle_fullscreen)
 
         self.exit_fullscreen_action = QAction("Exit Fullscreen", self)
         self.exit_fullscreen_action.setShortcut(QKeySequence(Qt.Key.Key_Escape))
         self.exit_fullscreen_action.triggered.connect(self._exit_fullscreen)
+
+        self.focus_action = QAction("Focus", self)
+        self.focus_action.setToolTip("Focus mode (Ctrl+Shift+F)")
+        self.focus_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        self.focus_action.setCheckable(True)
+        self.focus_action.triggered.connect(self._set_focus_mode)
+
+        self.theme_action = QAction("☾", self)
+        self.theme_action.setToolTip("Toggle light/dark theme")
+        self.theme_action.triggered.connect(self._toggle_theme)
 
         self.home_action = QAction("Return Home", self)
         self.home_action.setShortcut(QKeySequence("Ctrl+H"))
@@ -84,7 +99,7 @@ class WorkspaceScreen(QWidget):
 
         self.addActions([
             self.first_action, self.previous_action, self.next_action, self.end_action,
-            self.previous_variation_action, self.next_variation_action, self.flip_action,
+            self.previous_variation_action, self.next_variation_action, self.flip_action, self.focus_action, self.theme_action,
             self.fullscreen_action, self.exit_fullscreen_action, self.home_action, self.drill_action,
         ])
 
@@ -93,29 +108,41 @@ class WorkspaceScreen(QWidget):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
+        top_bar = QHBoxLayout()
+        top_bar.setSpacing(8)
         self._header = QLabel(f"Workspace · {self._repertoire_name}")
         self._header.setObjectName("screen_heading")
-        root.addWidget(self._header)
+        top_bar.addWidget(self._header)
+        top_bar.addStretch(1)
+        for action in [self.home_action, self.drill_action, self.flip_action, self.focus_action, self.fullscreen_action, self.theme_action]:
+            button = QToolButton()
+            button.setDefaultAction(action)
+            button.setAutoRaise(False)
+            top_bar.addWidget(button)
+        root.addLayout(top_bar)
 
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_splitter.setChildrenCollapsible(False)
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setChildrenCollapsible(False)
 
         board_region = QFrame()
         board_region.setObjectName("board_region")
         board_layout = QVBoxLayout(board_region)
-        board_layout.setContentsMargins(4, 4, 4, 4)
+        board_layout.setContentsMargins(6, 6, 6, 6)
         board_layout.addWidget(self._board, 1, Qt.AlignmentFlag.AlignCenter)
 
-        side_splitter = QSplitter(Qt.Orientation.Vertical)
-        side_splitter.setChildrenCollapsible(False)
-        side_splitter.addWidget(PlaceholderPanel("Engine analysis\nFuture evaluation lines"))
+        self._side_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._side_splitter.setChildrenCollapsible(False)
+        self._engine_panel = PlaceholderPanel("Engine analysis\nFuture evaluation lines")
+        self._side_splitter.addWidget(self._engine_panel)
 
         move_tree_panel = QFrame()
         move_tree_panel.setObjectName("move_tree_panel")
         move_tree_layout = QVBoxLayout(move_tree_panel)
         move_tree_layout.setContentsMargins(8, 8, 8, 8)
         move_tree_layout.setSpacing(6)
-        move_tree_layout.addWidget(QLabel("Move tree"))
+        tree_heading = QLabel("Move tree")
+        tree_heading.setObjectName("panel_heading")
+        move_tree_layout.addWidget(tree_heading)
         toolbar = QHBoxLayout()
         toolbar.setSpacing(3)
         for action in [self.first_action, self.previous_action, self.next_action, self.end_action, self.previous_variation_action, self.next_variation_action]:
@@ -126,15 +153,16 @@ class WorkspaceScreen(QWidget):
         toolbar.addStretch(1)
         move_tree_layout.addLayout(toolbar)
         move_tree_layout.addWidget(self._move_tree, 1)
-        side_splitter.addWidget(move_tree_panel)
-        side_splitter.setSizes([210, 430])
+        self._move_tree_panel = move_tree_panel
+        self._side_splitter.addWidget(move_tree_panel)
+        self._side_splitter.setSizes([180, 460])
 
-        main_splitter.addWidget(board_region)
-        main_splitter.addWidget(side_splitter)
-        main_splitter.setStretchFactor(0, 7)
-        main_splitter.setStretchFactor(1, 2)
-        main_splitter.setSizes([1120, 280])
-        root.addWidget(main_splitter, 1)
+        self._main_splitter.addWidget(board_region)
+        self._main_splitter.addWidget(self._side_splitter)
+        self._main_splitter.setStretchFactor(0, 8)
+        self._main_splitter.setStretchFactor(1, 2)
+        self._main_splitter.setSizes([1180, 260])
+        root.addWidget(self._main_splitter, 1)
 
         actions = QHBoxLayout()
         back_button = QPushButton("Back to Home")
@@ -151,6 +179,10 @@ class WorkspaceScreen(QWidget):
         actions.addWidget(drill_button)
         actions.addStretch(1)
         actions.addWidget(notation_toggle)
+        focus_button = QPushButton("Focus Mode")
+        focus_button.clicked.connect(lambda: self._set_focus_mode(not self._focus_mode))
+        self.focus_action.changed.connect(lambda: focus_button.setText("Exit Focus" if self._focus_mode else "Focus Mode"))
+        actions.addWidget(focus_button)
         actions.addWidget(flip_button)
         root.addLayout(actions)
 
@@ -170,6 +202,18 @@ class WorkspaceScreen(QWidget):
 
     def _navigate_to(self, node: MoveTreeNode) -> None:
         self._restore_node(node)
+
+    def _set_focus_mode(self, enabled: bool) -> None:
+        self._focus_mode = bool(enabled)
+        self.focus_action.setChecked(self._focus_mode)
+        self._side_splitter.setVisible(not self._focus_mode)
+        self._header.setText(("Focus · " if self._focus_mode else "Workspace · ") + self._repertoire_name)
+        self._main_splitter.setSizes([1, 0] if self._focus_mode else [1180, 260])
+
+    def _toggle_theme(self) -> None:
+        self._theme = LIGHT_THEME if self._theme is DARK_THEME else DARK_THEME
+        self._board.set_theme(self._theme.board)
+        self.window().setStyleSheet(stylesheet(self._theme))
 
     def _toggle_fullscreen(self) -> None:
         window = self.window()

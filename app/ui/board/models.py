@@ -51,4 +51,9 @@ class BoardTheme:
     border: QColor = field(default_factory=lambda: QColor("#2F3437"))
     border_background: QColor = field(default_factory=lambda: QColor("#F4F1E8"))
     outer_margin_ratio: float = 0.008
+    corner_radius_ratio: float = 0.018
+    selected_color: QColor = field(default_factory=lambda: QColor(246, 222, 87, 112))
+    destination_color: QColor = field(default_factory=lambda: QColor(20, 85, 30, 88))
+    hover_color: QColor = field(default_factory=lambda: QColor(255, 255, 255, 48))
+    last_move_color: QColor = field(default_factory=lambda: QColor(255, 235, 117, 82))
     coordinate_style: CoordinateStyle = field(default_factory=CoordinateStyle)
