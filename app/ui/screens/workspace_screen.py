@@ -17,6 +17,8 @@ class WorkspaceScreen(QWidget):
 
     backHomeRequested = Signal()
     startDrillRequested = Signal()
+    repertoireChanged = Signal()
+    currentNodeChanged = Signal(object)
 
     def __init__(self, parent: QWidget | None = None, *, theme: AppTheme | None = None) -> None:
         """Create the workspace with board, move tree, and editor actions."""
@@ -194,11 +196,13 @@ class WorkspaceScreen(QWidget):
         node = self._move_tree_model.add_move(move)
         self._move_tree.refresh()
         self._restore_node(node)
+        self.repertoireChanged.emit()
 
     def _restore_node(self, node: MoveTreeNode) -> None:
         self._move_tree_model.select_node(node)
         self._board.set_position(node.fen)
         self._move_tree.set_current_node(node)
+        self.currentNodeChanged.emit(node)
 
     def _navigate_to(self, node: MoveTreeNode) -> None:
         self._restore_node(node)
@@ -226,6 +230,23 @@ class WorkspaceScreen(QWidget):
         window = self.window()
         if window.isFullScreen():
             window.showNormal()
+
+    def load_repertoire(self, name: str, model: MoveTreeModel, selected_node: MoveTreeNode | None = None) -> None:
+        """Replace the workspace with a persisted repertoire tree."""
+        self._move_tree_model = model
+        self.set_repertoire_name(name)
+        self._move_tree.set_model(self._move_tree_model)
+        self._restore_node(selected_node or self._move_tree_model.current_node)
+
+    @property
+    def move_tree_model(self) -> MoveTreeModel:
+        """Return the editable move tree model."""
+        return self._move_tree_model
+
+    @property
+    def current_node(self) -> MoveTreeNode:
+        """Return the currently selected move-tree node."""
+        return self._move_tree_model.current_node
 
     def set_repertoire_name(self, name: str) -> None:
         """Update the workspace heading for the selected repertoire."""
