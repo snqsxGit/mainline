@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtCore import Signal, Qt
-from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSplitter, QToolButton, QVBoxLayout, QWidget
 
 from app.chess import MoveTreeModel, MoveTreeNode
 from app.ui.board import ChessBoardWidget
-from app.ui.widgets import MoveTreeWidget, PlaceholderPanel
-from app.ui.theme import AppTheme, DARK_THEME, LIGHT_THEME, stylesheet
+from app.ui.widgets import MoveTreeWidget
+from app.services import EngineService
+from app.ui.theme import AppTheme, DARK_THEME, LIGHT_THEME, DEFAULT_BOARD_THEME, stylesheet
 
 
 class WorkspaceScreen(QWidget):
@@ -26,10 +27,15 @@ class WorkspaceScreen(QWidget):
         self.setObjectName("workspace_screen")
         self._theme = theme or DARK_THEME
         self._focus_mode = False
-        self._board = ChessBoardWidget(theme=self._theme.board)
+        self._board = ChessBoardWidget(theme=DEFAULT_BOARD_THEME)
         self._move_tree_model = MoveTreeModel()
         self._move_tree = MoveTreeWidget()
         self._repertoire_name = "Selected repertoire"
+        self._repertoire_side = "white"
+        self._undo_stack: list[str] = []
+        self._redo_stack: list[str] = []
+        self._engine = EngineService()
+        self._engine_enabled = False
         self._build_actions()
         self._build_ui()
         self._connect_synchronization()
@@ -99,10 +105,34 @@ class WorkspaceScreen(QWidget):
         self.drill_action.setShortcut(QKeySequence("Ctrl+D"))
         self.drill_action.triggered.connect(self.startDrillRequested.emit)
 
+        self.undo_action = QAction("Undo", self)
+        self.undo_action.setShortcut(QKeySequence("Ctrl+Z"))
+        self.undo_action.triggered.connect(self.undo)
+
+        self.redo_action = QAction("Redo", self)
+        self.redo_action.setShortcut(QKeySequence("Ctrl+Shift+Z"))
+        self.redo_action.triggered.connect(self.redo)
+
+        self.copy_fen_action = QAction("Copy FEN", self)
+        self.copy_fen_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
+        self.copy_fen_action.triggered.connect(self.copy_fen)
+
+        self.copy_pgn_action = QAction("Copy PGN", self)
+        self.copy_pgn_action.setShortcut(QKeySequence("Ctrl+C"))
+        self.copy_pgn_action.triggered.connect(self.copy_pgn)
+
+        self.promote_action = QAction("Promote Variation", self)
+        self.promote_action.triggered.connect(lambda: self.promote_variation(self.current_node))
+
+        self.engine_action = QAction("Toggle Engine", self)
+        self.engine_action.setCheckable(True)
+        self.engine_action.triggered.connect(self.toggle_engine)
+
         self.addActions([
             self.first_action, self.previous_action, self.next_action, self.end_action,
             self.previous_variation_action, self.next_variation_action, self.flip_action, self.focus_action, self.theme_action,
             self.fullscreen_action, self.exit_fullscreen_action, self.home_action, self.drill_action,
+            self.undo_action, self.redo_action, self.copy_fen_action, self.copy_pgn_action, self.promote_action, self.engine_action,
         ])
 
     def _build_ui(self) -> None:
@@ -134,7 +164,10 @@ class WorkspaceScreen(QWidget):
 
         self._side_splitter = QSplitter(Qt.Orientation.Vertical)
         self._side_splitter.setChildrenCollapsible(False)
-        self._engine_panel = PlaceholderPanel("Engine analysis\nFuture evaluation lines")
+        self._engine_panel = QLabel("Engine off · use Study > Toggle Engine")
+        self._engine_panel.setObjectName("placeholder_panel")
+        self._engine_panel.setWordWrap(True)
+        self._engine_panel.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._side_splitter.addWidget(self._engine_panel)
 
         move_tree_panel = QFrame()
@@ -191,8 +224,13 @@ class WorkspaceScreen(QWidget):
     def _connect_synchronization(self) -> None:
         self._board.movePlayed.connect(self._add_board_move)
         self._move_tree.nodeSelected.connect(self._restore_node)
+        self._move_tree.copyPgnRequested.connect(lambda _node: self.copy_pgn())
+        self._move_tree.copyFenRequested.connect(lambda node: self.copy_fen(node))
+        self._move_tree.promoteVariationRequested.connect(self.promote_variation)
+        self._move_tree.deleteNodeRequested.connect(self.delete_node)
 
     def _add_board_move(self, move: object) -> None:
+        self._record_undo_snapshot()
         node = self._move_tree_model.add_move(move)
         self._move_tree.refresh()
         self._restore_node(node)
@@ -202,6 +240,8 @@ class WorkspaceScreen(QWidget):
         self._move_tree_model.select_node(node)
         self._board.set_position(node.fen)
         self._move_tree.set_current_node(node)
+        self._update_metadata()
+        self._update_engine_panel()
         self.currentNodeChanged.emit(node)
 
     def _navigate_to(self, node: MoveTreeNode) -> None:
@@ -216,7 +256,6 @@ class WorkspaceScreen(QWidget):
 
     def _toggle_theme(self) -> None:
         self._theme = LIGHT_THEME if self._theme is DARK_THEME else DARK_THEME
-        self._board.set_theme(self._theme.board)
         self.window().setStyleSheet(stylesheet(self._theme))
 
     def _toggle_fullscreen(self) -> None:
@@ -231,9 +270,11 @@ class WorkspaceScreen(QWidget):
         if window.isFullScreen():
             window.showNormal()
 
-    def load_repertoire(self, name: str, model: MoveTreeModel, selected_node: MoveTreeNode | None = None) -> None:
+    def load_repertoire(self, name: str, model: MoveTreeModel, selected_node: MoveTreeNode | None = None, *, side: str = "white") -> None:
         """Replace the workspace with a persisted repertoire tree."""
         self._move_tree_model = model
+        self._repertoire_side = side
+        self._undo_stack.clear(); self._redo_stack.clear()
         self.set_repertoire_name(name)
         self._move_tree.set_model(self._move_tree_model)
         self._restore_node(selected_node or self._move_tree_model.current_node)
@@ -252,9 +293,96 @@ class WorkspaceScreen(QWidget):
         """Update the workspace heading for the selected repertoire."""
         cleaned_name = name.strip() or "Selected repertoire"
         self._repertoire_name = cleaned_name
-        self._header.setText(f"Workspace · {self._repertoire_name}")
+        self._update_metadata()
 
     @property
     def board(self) -> ChessBoardWidget:
         """Expose the reusable board for future workspace controllers."""
         return self._board
+
+
+    def _record_undo_snapshot(self) -> None:
+        self._undo_stack.append(self._move_tree_model.to_pgn())
+        self._redo_stack.clear()
+
+    def undo(self) -> None:
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(self._move_tree_model.to_pgn())
+        self._move_tree_model = MoveTreeModel.from_pgn(self._undo_stack.pop())
+        self._move_tree.set_model(self._move_tree_model)
+        self._restore_node(self._move_tree_model.current_node)
+        self.repertoireChanged.emit()
+
+    def redo(self) -> None:
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(self._move_tree_model.to_pgn())
+        self._move_tree_model = MoveTreeModel.from_pgn(self._redo_stack.pop())
+        self._move_tree.set_model(self._move_tree_model)
+        self._restore_node(self._move_tree_model.current_node)
+        self.repertoireChanged.emit()
+
+    def copy_fen(self, node: MoveTreeNode | None = None) -> None:
+        QApplication.clipboard().setText((node or self.current_node).fen)
+
+    def copy_pgn(self) -> None:
+        QApplication.clipboard().setText(self._move_tree_model.to_pgn())
+
+    def import_pgn_text(self, pgn_text: str, *, name: str | None = None) -> None:
+        self._record_undo_snapshot()
+        self._move_tree_model = MoveTreeModel.from_pgn(pgn_text)
+        if name:
+            self._repertoire_name = name
+        self._move_tree.set_model(self._move_tree_model)
+        self._restore_node(self._move_tree_model.root)
+        self.repertoireChanged.emit()
+
+    def export_pgn_text(self) -> str:
+        return self._move_tree_model.to_pgn()
+
+    def promote_variation(self, node: MoveTreeNode | None = None) -> None:
+        self._record_undo_snapshot()
+        selected = self._move_tree_model.promote_to_mainline(node or self.current_node)
+        self._move_tree.refresh()
+        self._restore_node(selected)
+        self.repertoireChanged.emit()
+
+    def delete_node(self, node: MoveTreeNode | None = None) -> None:
+        if (node or self.current_node).is_root:
+            return
+        self._record_undo_snapshot()
+        selected = self._move_tree_model.delete_node(node or self.current_node)
+        self._move_tree.refresh()
+        self._restore_node(selected)
+        self.repertoireChanged.emit()
+
+    def toggle_engine(self, enabled: bool) -> None:
+        self._engine_enabled = bool(enabled)
+        if not self._engine_enabled:
+            self._engine.stop()
+        self._update_engine_panel()
+
+    def _update_engine_panel(self) -> None:
+        if not hasattr(self, "_engine_panel") or not self._engine_enabled:
+            if hasattr(self, "_engine_panel"):
+                self._engine_panel.setText("Engine off · use Study > Toggle Engine")
+            return
+        try:
+            analysis = self._engine.analyse(self.current_node.fen, depth=8)
+            self._engine_panel.setText(
+                f"Engine analysis\nEval: {analysis.evaluation}\nBest: {analysis.best_move}\nDepth: {analysis.depth or '—'}\nPV: {analysis.pv or '—'}"
+            )
+        except Exception as exc:  # engine availability is environment-dependent
+            self._engine_panel.setText(f"Stockfish unavailable\n{exc}")
+            self.engine_action.setChecked(False)
+            self._engine_enabled = False
+
+    def _update_metadata(self) -> None:
+        if not hasattr(self, "_header"):
+            return
+        side_to_move = "White" if " w " in self.current_node.fen else "Black"
+        prefix = "Focus" if self._focus_mode else "Workspace"
+        self._header.setText(
+            f"{prefix} · {self._repertoire_name} · {self._repertoire_side.title()} · {side_to_move} to move · {self._move_tree_model.node_count()} nodes"
+        )
